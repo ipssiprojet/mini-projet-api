@@ -5,7 +5,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-# on cherche le fichier .env dans le dossier du script
+# On charge le fichier .env situé dans le même dossier que le script
 dossier = Path(__file__).resolve().parent
 load_dotenv(dossier / ".env")
 
@@ -51,18 +51,18 @@ def requete_api(url, params=None, max_tentatives=3):
             print(f"Problème réseau. Nouvelle tentative dans {attente} s.")
             time.sleep(attente)
 
-            # on double la pause avant la prochaine tentative
+            # On double le délai d'attente pour la prochaine tentative
             attente = attente * 2
             continue
 
-        # ces erreurs demandent une correction, pas une nouvelle tentative
+        # Ces erreurs nécessitent une correction avant de relancer la requête
         if response.status_code in erreurs:
             raise RuntimeError(
                 f"Erreur {response.status_code} : "
                 f"{erreurs[response.status_code]}"
             )
 
-        # pour les erreurs temporaires on peut réessayer
+        # On réessaie si l'erreur est temporaire
         if response.status_code in (429, 500, 502, 503, 504):
             if tentative == max_tentatives:
                 raise RuntimeError(
@@ -72,7 +72,7 @@ def requete_api(url, params=None, max_tentatives=3):
 
             pause = attente
 
-            # le serveur peut demander une pause plus longue
+            # En cas de limite de requêtes, on respecte le délai indiqué par le serveur
             if response.status_code == 429:
                 try:
                     delai_serveur = float(
@@ -94,7 +94,7 @@ def requete_api(url, params=None, max_tentatives=3):
             attente = attente * 2
             continue
 
-        # on vérifie les autres erreurs HTTP possibles
+        # On vérifie si la réponse contient une autre erreur HTTP
         response.raise_for_status()
 
         try:
@@ -107,7 +107,7 @@ def requete_api(url, params=None, max_tentatives=3):
 
 
 def get_movie_details(movie_id):
-    # True et False ne doivent pas être acceptés comme identifiants
+    # On refuse les booléens, car Python les considère aussi comme des entiers
     if isinstance(movie_id, bool):
         raise ValueError("L'identifiant doit être un entier positif.")
 
@@ -133,7 +133,7 @@ def get_movie_details(movie_id):
     }
 
 
-# cette partie ne se lance pas quand un autre fichier importe main
+# Ce bloc s'exécute uniquement si on lance ce fichier directement
 if __name__ == "__main__":
     try:
         film = get_movie_details(550)
