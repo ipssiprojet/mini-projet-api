@@ -9,7 +9,7 @@ simulation de forte charge, cache, import SQLite et interface Streamlit.
 
 Le code et les instructions sont dans [projet_tmdb](projet_tmdb/README.md).
 
-google colab : https://colab.research.google.com/drive/1jID_G9GNd7espmZMfuy9xNU98xXcIDsD
+google colab : https://colab.research.google.com/drive/1e5D08M7NJ4ZH_aXakpo5RJmxLqvobKEV?authuser=1
 
 ## Projet 2 — PokéAPI
 
