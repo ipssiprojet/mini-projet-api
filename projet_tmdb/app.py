@@ -1,4 +1,5 @@
 import sqlite3
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -17,6 +18,57 @@ st.set_page_config(
 BASE = Path(__file__).resolve().parent / "data" / "tmdb.db"
 
 
+@st.cache_resource
+def preparer_base():
+    # si la base existe deja on la garde
+    if BASE.exists():
+        return
+
+    BASE.parent.mkdir(exist_ok=True)
+
+    url = (
+        "https://github.com/lucio0013/mini-projet-api/"
+        "releases/download/v1.0/tmdb.db"
+    )
+
+    temporaire = None
+
+    try:
+        with requests.get(url, stream=True, timeout=120) as reponse:
+            reponse.raise_for_status()
+
+            # le fichier temporaire evite d'utiliser une base incomplete
+            with tempfile.NamedTemporaryFile(
+                dir=BASE.parent,
+                suffix=".db",
+                delete=False
+            ) as fichier:
+                temporaire = Path(fichier.name)
+
+                for bloc in reponse.iter_content(
+                    chunk_size=1024 * 1024
+                ):
+                    if bloc:
+                        fichier.write(bloc)
+
+        # on verifie que la table attendue est presente
+        connexion = sqlite3.connect(temporaire)
+
+        try:
+            connexion.execute(
+                "SELECT id, original_title, popularity FROM films LIMIT 1"
+            ).fetchone()
+        finally:
+            connexion.close()
+
+        temporaire.replace(BASE)
+
+    finally:
+        # on nettoie le fichier temporaire si le telechargement a echoue
+        if temporaire is not None and temporaire.exists():
+            temporaire.unlink()
+
+
 # on garde les informations une heure en cache
 @st.cache_data(ttl=3600, max_entries=1000)
 def charger_film(movie_id):
@@ -24,7 +76,7 @@ def charger_film(movie_id):
 
 
 def lire_base(requete, parametres=()):
-    # on ouvre la base et on recupere le resultat dans un DataFrame
+    # on recupere le resultat SQL dans un DataFrame
     connexion = sqlite3.connect(BASE)
 
     try:
@@ -60,7 +112,6 @@ with onglet_api:
 
         rechercher = st.form_submit_button("Afficher le film")
 
-    # on attend le clic sur le bouton avant de chercher
     if rechercher:
         try:
             with st.spinner("Chargement du film..."):
@@ -89,14 +140,15 @@ with onglet_api:
 with onglet_base:
     st.subheader("Films enregistrés dans SQLite")
 
-    if not BASE.exists():
-        st.warning(
-            "Base absente. Lance d’abord export_tmdb.py puis import_sql.py."
-        )
+    try:
+        with st.spinner("Préparation de la base de films..."):
+            preparer_base()
+
+    except (requests.RequestException, OSError, sqlite3.Error) as erreur:
+        st.error(f"Impossible de préparer la base : {erreur}")
 
     else:
         try:
-            # on compte les films presents dans la table
             comptage = lire_base(
                 "SELECT COUNT(*) AS total FROM films"
             )
@@ -143,7 +195,6 @@ with onglet_base:
                         width="stretch"
                     )
 
-            # on affiche aussi les 10 films les plus populaires
             st.subheader("Les dix films les plus populaires")
 
             populaires = lire_base(
