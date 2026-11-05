@@ -41,6 +41,8 @@ def resume(data):
 # cache d'1h (Q3)
 @st.cache_data(ttl=3600)
 def get_pokemon(nom):
+    if not nom.strip():
+        return None
     data = safe_get(f"{URL}/pokemon/{nom.lower().strip()}")
     return resume(data) if data else None
 
