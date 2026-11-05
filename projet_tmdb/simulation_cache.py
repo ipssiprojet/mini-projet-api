@@ -1,7 +1,6 @@
 import asyncio
 import time
 from collections import Counter
-from copy import deepcopy
 
 from simulation_async import ROUTES, requete_robuste
 
@@ -11,8 +10,13 @@ class CacheAPI:
         self.duree = duree
         self.horloge = horloge
         self.cache = {}
-        self.verrous = {url: asyncio.Lock() for url in ROUTES}
         self.statistiques = Counter()
+
+        # un verrou par route pour eviter les appels en double
+        self.verrous = {}
+
+        for url in ROUTES:
+            self.verrous[url] = asyncio.Lock()
 
     async def get(self, url):
         if url not in self.verrous:
@@ -24,14 +28,14 @@ class CacheAPI:
             if entree is not None:
                 expiration, donnees = entree
 
+                # si le cache est encore valide on reprend les donnees
                 if self.horloge() < expiration:
                     self.statistiques["lectures_cache"] += 1
-                    return deepcopy(donnees)
+                    return donnees.copy()
 
+                # sinon on supprime les anciennes donnees
                 del self.cache[url]
                 self.statistiques["expirations"] += 1
-
-            self.statistiques["lectures_api"] += 1
 
             succes = await requete_robuste(
                 url,
@@ -41,16 +45,19 @@ class CacheAPI:
             if not succes:
                 raise RuntimeError(f"Échec de la requête vers {url}")
 
+            self.statistiques["lectures_api"] += 1
+
+            # la version sert a voir si les donnees ont ete rechargees
             donnees = {
                 "url": url,
                 "message": "Données simulées",
                 "version": self.statistiques["lectures_api"]
             }
 
-            self.cache[url] = (
-                self.horloge() + self.duree,
-                deepcopy(donnees)
-            )
+            expiration = self.horloge() + self.duree
+
+            # on garde une copie pour proteger le contenu du cache
+            self.cache[url] = (expiration, donnees.copy())
 
             return donnees
 
@@ -67,6 +74,7 @@ class HorlogeSimulee:
 
 
 async def demonstration():
+    # cette horloge permet de tester sans attendre une heure
     horloge = HorlogeSimulee()
 
     client = CacheAPI(
@@ -84,22 +92,30 @@ async def demonstration():
     resultat2 = await client.get(url)
     print(resultat2)
 
+    # assert arrete le test si le resultat est incorrect
     assert resultat1 == resultat2
     assert client.statistiques["lectures_api"] == 1
     assert client.statistiques["lectures_cache"] == 1
 
     print("\n3. Cent appels simultanés sur la même route")
 
-    resultats = await asyncio.gather(
-        *(client.get(url) for _ in range(100))
-    )
+    appels = []
 
-    assert all(resultat == resultat1 for resultat in resultats)
+    for _ in range(100):
+        appels.append(client.get(url))
+
+    resultats = await asyncio.gather(*appels)
+
+    for resultat in resultats:
+        assert resultat == resultat1
+
     assert client.statistiques["lectures_api"] == 1
 
     print("Les 100 appels utilisent le cache.")
 
     print("\n4. Simulation du passage de 3 601 secondes")
+
+    # on avance le temps pour faire expirer le cache
     horloge.avancer(3601)
 
     resultat3 = await client.get(url)
@@ -125,6 +141,7 @@ async def demonstration():
 if __name__ == "__main__":
     try:
         asyncio.run(demonstration())
+
     except RuntimeError as erreur:
         print(f"Erreur simulée : {erreur}")
         print("Relance le script pour refaire la démonstration.")

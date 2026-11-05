@@ -7,6 +7,7 @@ import streamlit as st
 
 from main import get_movie_details
 
+# reglages de la page
 st.set_page_config(
     page_title="Projet TMDB",
     page_icon="🎬",
@@ -16,12 +17,14 @@ st.set_page_config(
 BASE = Path(__file__).resolve().parent / "data" / "tmdb.db"
 
 
+# on garde les informations une heure en cache
 @st.cache_data(ttl=3600, max_entries=1000)
 def charger_film(movie_id):
     return get_movie_details(movie_id)
 
 
 def lire_base(requete, parametres=()):
+    # on ouvre la base et on recupere le resultat dans un DataFrame
     connexion = sqlite3.connect(BASE)
 
     try:
@@ -42,6 +45,7 @@ onglet_api, onglet_base = st.tabs([
     "Explorer la base SQL"
 ])
 
+# premier onglet pour rechercher avec l'API
 with onglet_api:
     st.subheader("Rechercher un film par son identifiant")
     st.caption("Les réponses sont conservées en cache pendant une heure.")
@@ -56,6 +60,7 @@ with onglet_api:
 
         rechercher = st.form_submit_button("Afficher le film")
 
+    # on attend le clic sur le bouton avant de chercher
     if rechercher:
         try:
             with st.spinner("Chargement du film..."):
@@ -80,17 +85,23 @@ with onglet_api:
         except (ValueError, RuntimeError, requests.RequestException) as erreur:
             st.error(str(erreur))
 
+# deuxieme onglet pour consulter la base SQL
 with onglet_base:
     st.subheader("Films enregistrés dans SQLite")
 
     if not BASE.exists():
-        st.warning("Base absente. Lance d’abord import_sql.py.")
+        st.warning(
+            "Base absente. Lance d’abord export_tmdb.py puis import_sql.py."
+        )
 
     else:
         try:
-            nombre = lire_base(
+            # on compte les films presents dans la table
+            comptage = lire_base(
                 "SELECT COUNT(*) AS total FROM films"
-            ).iloc[0]["total"]
+            )
+
+            nombre = comptage.iloc[0]["total"]
 
             st.metric("Nombre de films", f"{int(nombre):,}")
 
@@ -108,6 +119,7 @@ with onglet_base:
                 filtrer = st.form_submit_button("Rechercher")
 
             if filtrer:
+                # les ? sont remplaces par le titre et la limite
                 tableau = lire_base(
                     """
                     SELECT
@@ -131,6 +143,7 @@ with onglet_base:
                         width="stretch"
                     )
 
+            # on affiche aussi les 10 films les plus populaires
             st.subheader("Les dix films les plus populaires")
 
             populaires = lire_base(

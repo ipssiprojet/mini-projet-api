@@ -5,7 +5,9 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parent / ".env")
+# on cherche le fichier .env dans le dossier du script
+dossier = Path(__file__).resolve().parent
+load_dotenv(dossier / ".env")
 
 TOKEN = os.getenv("TMDB_READ_ACCESS_TOKEN")
 
@@ -29,9 +31,9 @@ def requete_api(url, params=None, max_tentatives=3):
         404: "Ressource introuvable : vérifie l'identifiant."
     }
 
-    for tentative in range(1, max_tentatives + 1):
-        attente = 2 ** (tentative - 1)
+    attente = 1
 
+    for tentative in range(1, max_tentatives + 1):
         try:
             response = requests.get(
                 url,
@@ -39,22 +41,28 @@ def requete_api(url, params=None, max_tentatives=3):
                 params=params,
                 timeout=30
             )
-        except (requests.ConnectionError, requests.Timeout) as erreur:
+
+        except (requests.ConnectionError, requests.Timeout):
             if tentative == max_tentatives:
                 raise RuntimeError(
                     "Impossible de contacter l'API après plusieurs tentatives."
-                ) from erreur
+                )
 
             print(f"Problème réseau. Nouvelle tentative dans {attente} s.")
             time.sleep(attente)
+
+            # on double la pause avant la prochaine tentative
+            attente = attente * 2
             continue
 
+        # ces erreurs demandent une correction, pas une nouvelle tentative
         if response.status_code in erreurs:
             raise RuntimeError(
                 f"Erreur {response.status_code} : "
                 f"{erreurs[response.status_code]}"
             )
 
+        # pour les erreurs temporaires on peut réessayer
         if response.status_code in (429, 500, 502, 503, 504):
             if tentative == max_tentatives:
                 raise RuntimeError(
@@ -62,33 +70,44 @@ def requete_api(url, params=None, max_tentatives=3):
                     "nombre maximal de tentatives atteint."
                 )
 
+            pause = attente
+
+            # le serveur peut demander une pause plus longue
             if response.status_code == 429:
                 try:
-                    attente = max(
-                        attente,
-                        float(response.headers.get("Retry-After", attente))
+                    delai_serveur = float(
+                        response.headers.get("Retry-After", attente)
                     )
+
+                    if delai_serveur > pause:
+                        pause = delai_serveur
+
                 except ValueError:
                     pass
 
             print(
                 f"Erreur {response.status_code}. "
-                f"Nouvelle tentative dans {attente} s."
+                f"Nouvelle tentative dans {pause} s."
             )
-            time.sleep(attente)
+
+            time.sleep(pause)
+            attente = attente * 2
             continue
 
+        # on vérifie les autres erreurs HTTP possibles
         response.raise_for_status()
 
         try:
             return response.json()
-        except ValueError as erreur:
+
+        except ValueError:
             raise RuntimeError(
                 "La réponse de l'API n'est pas un JSON valide."
-            ) from erreur
+            )
 
 
 def get_movie_details(movie_id):
+    # True et False ne doivent pas être acceptés comme identifiants
     if isinstance(movie_id, bool):
         raise ValueError("L'identifiant doit être un entier positif.")
 
@@ -100,18 +119,24 @@ def get_movie_details(movie_id):
         params={"language": "fr-FR"}
     )
 
+    genres = []
+
+    for genre in movie["genres"]:
+        genres.append(genre["name"])
+
     return {
         "titre": movie["title"],
         "date_sortie": movie["release_date"],
-        "genres": [genre["name"] for genre in movie["genres"]],
+        "genres": genres,
         "popularite": movie["popularity"],
         "note_moyenne": movie["vote_average"]
     }
 
 
+# cette partie ne se lance pas quand un autre fichier importe main
 if __name__ == "__main__":
     try:
-        film = get_movie_details(550) 
+        film = get_movie_details(550)
 
         for champ, valeur in film.items():
             print(f"{champ} : {valeur}")

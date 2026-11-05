@@ -23,12 +23,13 @@ def importer_films():
 
     print("Lecture de l'export...")
 
+    films = []
+
+    # chaque ligne contient les donnees d'un film
     with source.open(encoding="utf-8") as fichier:
-        films = [
-            json.loads(ligne)
-            for ligne in fichier
-            if ligne.strip()
-        ]
+        for ligne in fichier:
+            if ligne.strip():
+                films.append(json.loads(ligne))
 
     print("Création du tableau JSON...")
 
@@ -38,6 +39,8 @@ def importer_films():
     print(f"Tableau JSON créé : {destination.name}")
 
     df = pd.DataFrame(films)
+
+    # on libere la liste maintenant que le DataFrame est cree
     del films
 
     colonnes = [
@@ -48,32 +51,38 @@ def importer_films():
         "video"
     ]
 
-    df = df[colonnes]
+    df = df[colonnes].copy()
+
+    # on remplace les valeurs manquantes dans ces deux colonnes
     df["adult"] = df["adult"].fillna(False).astype(bool)
     df["video"] = df["video"].fillna(False).astype(bool)
 
-    if df["id"].isna().any() or df["id"].duplicated().any():
-        raise ValueError("Certains identifiants sont absents ou dupliqués.")
+    if df["id"].isna().any():
+        raise ValueError("Certains identifiants sont absents.")
+
+    if df["id"].duplicated().any():
+        raise ValueError("Certains identifiants sont dupliqués.")
 
     print("\nAperçu du DataFrame :")
     print(df.head().to_string(index=False))
     print(f"\nNombre de films : {len(df):,}")
 
-    lignes = (
-        (
-            int(identifiant),
-            titre,
-            int(adulte),
-            float(popularite),
-            int(video)
+    requete_insertion = """
+        INSERT INTO films (
+            id, original_title, adult, popularity, video
         )
-        for identifiant, titre, adulte, popularite, video
-        in df.itertuples(index=False, name=None)
-    )
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            original_title = excluded.original_title,
+            adult = excluded.adult,
+            popularity = excluded.popularity,
+            video = excluded.video
+    """
 
     connexion = sqlite3.connect(base)
 
     try:
+        # si l'import echoue les changements sont annules
         with connexion:
             connexion.execute("""
                 CREATE TABLE IF NOT EXISTS films (
@@ -85,28 +94,40 @@ def importer_films():
                 )
             """)
 
-            connexion.executemany("""
-                INSERT INTO films (
-                    id, original_title, adult, popularity, video
-                )
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    original_title = excluded.original_title,
-                    adult = excluded.adult,
-                    popularity = excluded.popularity,
-                    video = excluded.video
-            """, lignes)
+            lot = []
 
-            nombre = connexion.execute(
+            # itertuples permet de parcourir les lignes du DataFrame
+            for ligne in df.itertuples(index=False, name=None):
+                identifiant, titre, adulte, popularite, video = ligne
+
+                lot.append((
+                    int(identifiant),
+                    titre,
+                    int(adulte),
+                    float(popularite),
+                    int(video)
+                ))
+
+                # on envoie les films par groupes de 5000
+                if len(lot) == 5000:
+                    connexion.executemany(requete_insertion, lot)
+                    lot.clear()
+
+            # on ajoute les derniers films s'il en reste
+            if lot:
+                connexion.executemany(requete_insertion, lot)
+
+            resultat = connexion.execute(
                 "SELECT COUNT(*) FROM films"
-            ).fetchone()[0]
+            ).fetchone()
 
-            manquants = connexion.execute(
-                "SELECT COUNT(*) FROM films WHERE original_title IS NULL"
-            ).fetchone()[0]
+            nombre = resultat[0]
 
-            if nombre < len(df) or manquants:
-                raise RuntimeError("La vérification de l'import a échoué.")
+            # la base peut aussi contenir des films des anciens exports
+            if nombre < len(df):
+                raise RuntimeError(
+                    "Le nombre de films dans la base est insuffisant."
+                )
 
         print(f"\nImport terminé : {len(df):,} films traités.")
         print(f"Total dans la table films : {nombre:,}")
@@ -132,6 +153,7 @@ def importer_films():
 if __name__ == "__main__":
     try:
         importer_films()
+
     except (OSError, ValueError, sqlite3.Error, RuntimeError) as erreur:
         print(f"Échec : {erreur}")
         sys.exit(1)

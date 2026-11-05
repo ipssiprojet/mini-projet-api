@@ -1,4 +1,5 @@
 import sys
+import time
 import gzip
 import json
 import shutil
@@ -6,11 +7,10 @@ from datetime import date
 from pathlib import Path
 
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 
 def telecharger_export():
+    # on construit le nom du fichier avec la date du jour
     date_du_jour = date.today().strftime("%m_%d_%Y")
     nom = f"movie_ids_{date_du_jour}.json.gz"
 
@@ -21,38 +21,84 @@ def telecharger_export():
 
     chemin_gz = dossier / nom
     chemin_json = chemin_gz.with_suffix("")
-    temporaire = chemin_gz.with_suffix(".part")
+    temporaire = dossier / f"{nom}.part"
 
-    retry = Retry(
-        total=3,
-        backoff_factor=1,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["GET"],
-        respect_retry_after_header=True
-    )
+    attente = 1
 
-    print(f"Téléchargement : {nom}")
+    # on fait au maximum 3 tentatives
+    for tentative in range(1, 4):
+        print(f"Téléchargement : {nom} — tentative {tentative}")
 
-    with requests.Session() as session:
-        session.mount("https://", HTTPAdapter(max_retries=retry))
+        try:
+            with requests.get(url, stream=True, timeout=60) as reponse:
+                if reponse.status_code == 404:
+                    raise RuntimeError(
+                        "Export du jour introuvable. "
+                        "Il peut ne pas être encore disponible avant 8 h UTC."
+                    )
 
-        with session.get(url, stream=True, timeout=(10, 120)) as reponse:
-            if reponse.status_code == 404:
+                if reponse.status_code in (429, 500, 502, 503, 504):
+                    if tentative == 3:
+                        raise RuntimeError(
+                            f"Erreur {reponse.status_code} : "
+                            "nombre maximal de tentatives atteint."
+                        )
+
+                    pause = attente
+
+                    if reponse.status_code == 429:
+                        try:
+                            delai = float(
+                                reponse.headers.get("Retry-After", attente)
+                            )
+
+                            if delai > pause:
+                                pause = delai
+
+                        except ValueError:
+                            pass
+
+                    print(
+                        f"Erreur {reponse.status_code}. "
+                        f"Nouvelle tentative dans {pause} s."
+                    )
+
+                    time.sleep(pause)
+                    attente = attente * 2
+                    continue
+
+                reponse.raise_for_status()
+
+                # on ecrit le fichier par morceaux de 1 Mo
+                with temporaire.open("wb") as fichier:
+                    for bloc in reponse.iter_content(
+                        chunk_size=1024 * 1024
+                    ):
+                        if bloc:
+                            fichier.write(bloc)
+
+        except (
+            requests.ConnectionError,
+            requests.Timeout,
+            requests.exceptions.ChunkedEncodingError
+        ):
+            if tentative == 3:
                 raise RuntimeError(
-                    "L'export du jour n'est pas encore disponible. "
-                    "Réessaie après 8 h UTC."
+                    "Le téléchargement a échoué après trois tentatives."
                 )
 
-            reponse.raise_for_status()
+            print(f"Problème réseau. Nouvelle tentative dans {attente} s.")
+            time.sleep(attente)
+            attente = attente * 2
+            continue
 
-            with temporaire.open("wb") as fichier:
-                for bloc in reponse.iter_content(chunk_size=1024 * 1024):
-                    if bloc:
-                        fichier.write(bloc)
+        # on sort de la boucle si le telechargement a reussi
+        break
 
     temporaire.replace(chemin_gz)
     print("Téléchargement terminé.")
 
+    # on ouvre le fichier compresse et on copie son contenu decompresse
     with gzip.open(chemin_gz, "rb") as source:
         with chemin_json.open("wb") as destination:
             shutil.copyfileobj(source, destination)
@@ -61,8 +107,10 @@ def telecharger_export():
     print("\nLes cinq premiers films :")
 
     with chemin_json.open(encoding="utf-8") as fichier:
-        for numero, ligne in enumerate(fichier):
-            if numero == 5:
+        for numero in range(5):
+            ligne = fichier.readline()
+
+            if not ligne:
                 break
 
             film = json.loads(ligne)
@@ -74,6 +122,7 @@ def telecharger_export():
 if __name__ == "__main__":
     try:
         telecharger_export()
+
     except (requests.RequestException, OSError, ValueError, RuntimeError) as erreur:
         print(f"Échec : {erreur}")
         sys.exit(1)
