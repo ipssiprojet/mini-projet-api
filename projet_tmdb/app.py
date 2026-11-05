@@ -8,7 +8,7 @@ import streamlit as st
 
 from main import get_movie_details
 
-# reglages de la page
+# On configure la page
 st.set_page_config(
     page_title="Projet TMDB",
     page_icon="🎬",
@@ -20,7 +20,7 @@ BASE = Path(__file__).resolve().parent / "data" / "tmdb.db"
 
 @st.cache_resource
 def preparer_base():
-    # si la base existe deja on la garde
+    # On conserve la base si elle existe déjà
     if BASE.exists():
         return
 
@@ -37,7 +37,7 @@ def preparer_base():
         with requests.get(url, stream=True, timeout=120) as reponse:
             reponse.raise_for_status()
 
-            # le fichier temporaire evite d'utiliser une base incomplete
+            # On télécharge dans un fichier temporaire pour éviter une base incomplète
             with tempfile.NamedTemporaryFile(
                 dir=BASE.parent,
                 suffix=".db",
@@ -51,7 +51,7 @@ def preparer_base():
                     if bloc:
                         fichier.write(bloc)
 
-        # on verifie que la table attendue est presente
+        # On vérifie que la table films contient les colonnes attendues
         connexion = sqlite3.connect(temporaire)
 
         try:
@@ -64,19 +64,19 @@ def preparer_base():
         temporaire.replace(BASE)
 
     finally:
-        # on nettoie le fichier temporaire si le telechargement a echoue
+        # On supprime le fichier temporaire s'il est encore présent
         if temporaire is not None and temporaire.exists():
             temporaire.unlink()
 
 
-# on garde les informations une heure en cache
+# On conserve les informations des films en cache pendant une heure
 @st.cache_data(ttl=3600, max_entries=1000)
 def charger_film(movie_id):
     return get_movie_details(movie_id)
 
 
 def lire_base(requete, parametres=()):
-    # on recupere le resultat SQL dans un DataFrame
+    # On récupère le résultat de la requête SQL dans un DataFrame
     connexion = sqlite3.connect(BASE)
 
     try:
@@ -97,7 +97,7 @@ onglet_api, onglet_base = st.tabs([
     "Explorer la base SQL"
 ])
 
-# premier onglet pour rechercher avec l'API
+# Le premier onglet permet de rechercher un film avec l'API
 with onglet_api:
     st.subheader("Rechercher un film par son identifiant")
     st.caption("Les réponses sont conservées en cache pendant une heure.")
@@ -136,7 +136,7 @@ with onglet_api:
         except (ValueError, RuntimeError, requests.RequestException) as erreur:
             st.error(str(erreur))
 
-# deuxieme onglet pour consulter la base SQL
+# Le deuxième onglet permet de consulter la base SQL
 with onglet_base:
     st.subheader("Films enregistrés dans SQLite")
 
@@ -171,7 +171,7 @@ with onglet_base:
                 filtrer = st.form_submit_button("Rechercher")
 
             if filtrer:
-                # les ? sont remplaces par le titre et la limite
+                # On passe le titre et la limite comme paramètres à la place des ?
                 tableau = lire_base(
                     """
                     SELECT
