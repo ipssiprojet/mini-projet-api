@@ -20,11 +20,10 @@ BASE = Path(__file__).resolve().parent / "data" / "tmdb.db"
 
 @st.cache_resource
 def preparer_base():
-    # On conserve la base si elle existe déjà
     if BASE.exists():
         return
 
-    BASE.parent.mkdir(exist_ok=True)
+    BASE.parent.mkdir(parents=True, exist_ok=True)
 
     url = (
         "https://github.com/lucio0013/mini-projet-api/"
@@ -37,7 +36,6 @@ def preparer_base():
         with requests.get(url, stream=True, timeout=120) as reponse:
             reponse.raise_for_status()
 
-            # On télécharge dans un fichier temporaire pour éviter une base incomplète
             with tempfile.NamedTemporaryFile(
                 dir=BASE.parent,
                 suffix=".db",
@@ -51,32 +49,30 @@ def preparer_base():
                     if bloc:
                         fichier.write(bloc)
 
-        # On vérifie que la table films contient les colonnes attendues
         connexion = sqlite3.connect(temporaire)
 
         try:
             connexion.execute(
                 "SELECT id, original_title, popularity FROM films LIMIT 1"
             ).fetchone()
+
         finally:
             connexion.close()
 
         temporaire.replace(BASE)
 
     finally:
-        # On supprime le fichier temporaire s'il est encore présent
         if temporaire is not None and temporaire.exists():
             temporaire.unlink()
 
 
-# On conserve les informations des films en cache pendant une heure
+# Le nouveau nom évite de réutiliser les anciens résultats sans affiche
 @st.cache_data(ttl=3600, max_entries=1000)
-def charger_film(movie_id):
+def charger_film_avec_affiche(movie_id):
     return get_movie_details(movie_id)
 
 
 def lire_base(requete, parametres=()):
-    # On récupère le résultat de la requête SQL dans un DataFrame
     connexion = sqlite3.connect(BASE)
 
     try:
@@ -85,6 +81,7 @@ def lire_base(requete, parametres=()):
             connexion,
             params=parametres
         )
+
     finally:
         connexion.close()
 
@@ -97,7 +94,6 @@ onglet_api, onglet_base = st.tabs([
     "Explorer la base SQL"
 ])
 
-# Le premier onglet permet de rechercher un film avec l'API
 with onglet_api:
     st.subheader("Rechercher un film par son identifiant")
     st.caption("Les réponses sont conservées en cache pendant une heure.")
@@ -115,28 +111,48 @@ with onglet_api:
     if rechercher:
         try:
             with st.spinner("Chargement du film..."):
-                film = charger_film(int(movie_id))
+                film = charger_film_avec_affiche(int(movie_id))
 
             st.header(film["titre"])
-            st.write(f"**Date de sortie :** {film['date_sortie']}")
-            st.write(f"**Genres :** {', '.join(film['genres'])}")
 
-            colonne1, colonne2 = st.columns(2)
+            colonne_affiche, colonne_details = st.columns([1, 2])
 
-            colonne1.metric(
-                "Note moyenne / 10",
-                f"{film['note_moyenne']:.2f}"
-            )
+            with colonne_affiche:
+                if film.get("affiche"):
+                    st.image(
+                        film["affiche"],
+                        caption=film["titre"],
+                        width=300
+                    )
+                else:
+                    st.info("Aucune affiche disponible pour ce film.")
 
-            colonne2.metric(
-                "Popularité",
-                f"{film['popularite']:.2f}"
-            )
+            with colonne_details:
+                st.write(
+                    f"**Date de sortie :** "
+                    f"{film['date_sortie'] or 'Non renseignée'}"
+                )
+
+                st.write(
+                    f"**Genres :** "
+                    f"{', '.join(film['genres']) or 'Non renseignés'}"
+                )
+
+                colonne1, colonne2 = st.columns(2)
+
+                colonne1.metric(
+                    "Note moyenne / 10",
+                    f"{film['note_moyenne']:.2f}"
+                )
+
+                colonne2.metric(
+                    "Popularité",
+                    f"{film['popularite']:.2f}"
+                )
 
         except (ValueError, RuntimeError, requests.RequestException) as erreur:
             st.error(str(erreur))
 
-# Le deuxième onglet permet de consulter la base SQL
 with onglet_base:
     st.subheader("Films enregistrés dans SQLite")
 
@@ -171,7 +187,6 @@ with onglet_base:
                 filtrer = st.form_submit_button("Rechercher")
 
             if filtrer:
-                # On passe le titre et la limite comme paramètres à la place des ?
                 tableau = lire_base(
                     """
                     SELECT
@@ -188,6 +203,7 @@ with onglet_base:
 
                 if tableau.empty:
                     st.info("Aucun film trouvé.")
+
                 else:
                     st.dataframe(
                         tableau,

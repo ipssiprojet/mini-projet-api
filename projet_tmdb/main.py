@@ -14,7 +14,10 @@ TOKEN = os.getenv("TMDB_READ_ACCESS_TOKEN")
 
 def requete_api(url, params=None, max_tentatives=3):
     if not TOKEN:
-        raise ValueError("Le jeton TMDB est absent du fichier .env.")
+        raise ValueError(
+            "Le jeton TMDB est absent. Vérifie la variable "
+            "TMDB_READ_ACCESS_TOKEN."
+        )
 
     if max_tentatives < 1:
         raise ValueError("Il faut autoriser au moins une tentative.")
@@ -42,27 +45,23 @@ def requete_api(url, params=None, max_tentatives=3):
                 timeout=30
             )
 
-        except (requests.ConnectionError, requests.Timeout):
+        except (requests.ConnectionError, requests.Timeout) as erreur:
             if tentative == max_tentatives:
                 raise RuntimeError(
                     "Impossible de contacter l'API après plusieurs tentatives."
-                )
+                ) from erreur
 
             print(f"Problème réseau. Nouvelle tentative dans {attente} s.")
             time.sleep(attente)
-
-            # On double le délai d'attente pour la prochaine tentative
-            attente = attente * 2
+            attente *= 2
             continue
 
-        # Ces erreurs nécessitent une correction avant de relancer la requête
         if response.status_code in erreurs:
             raise RuntimeError(
                 f"Erreur {response.status_code} : "
                 f"{erreurs[response.status_code]}"
             )
 
-        # On réessaie si l'erreur est temporaire
         if response.status_code in (429, 500, 502, 503, 504):
             if tentative == max_tentatives:
                 raise RuntimeError(
@@ -72,7 +71,6 @@ def requete_api(url, params=None, max_tentatives=3):
 
             pause = attente
 
-            # En cas de limite de requêtes, on respecte le délai indiqué par le serveur
             if response.status_code == 429:
                 try:
                     delai_serveur = float(
@@ -91,23 +89,21 @@ def requete_api(url, params=None, max_tentatives=3):
             )
 
             time.sleep(pause)
-            attente = attente * 2
+            attente *= 2
             continue
 
-        # On vérifie si la réponse contient une autre erreur HTTP
         response.raise_for_status()
 
         try:
             return response.json()
 
-        except ValueError:
+        except ValueError as erreur:
             raise RuntimeError(
                 "La réponse de l'API n'est pas un JSON valide."
-            )
+            ) from erreur
 
 
 def get_movie_details(movie_id):
-    # On refuse les booléens, car Python les considère aussi comme des entiers
     if isinstance(movie_id, bool):
         raise ValueError("L'identifiant doit être un entier positif.")
 
@@ -124,16 +120,24 @@ def get_movie_details(movie_id):
     for genre in movie["genres"]:
         genres.append(genre["name"])
 
+    chemin_affiche = movie.get("poster_path")
+
+    affiche = (
+        f"https://image.tmdb.org/t/p/w500{chemin_affiche}"
+        if chemin_affiche
+        else None
+    )
+
     return {
         "titre": movie["title"],
         "date_sortie": movie["release_date"],
         "genres": genres,
         "popularite": movie["popularity"],
-        "note_moyenne": movie["vote_average"]
+        "note_moyenne": movie["vote_average"],
+        "affiche": affiche
     }
 
 
-# Ce bloc s'exécute uniquement si on lance ce fichier directement
 if __name__ == "__main__":
     try:
         film = get_movie_details(550)
